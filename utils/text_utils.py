@@ -1,0 +1,1 @@
+# Chứa hàm chuẩn hóa text, xóa khoảng trắng thừa trước khi đưa cho Llama
