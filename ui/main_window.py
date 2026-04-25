@@ -4,7 +4,6 @@ app/ui/main_window.py (Giao diện mới từ ui_test, kết hợp core cũ)
 import os
 import sys
 import threading
-import tempfile
 import cv2
 import customtkinter as ctk
 import numpy as np
@@ -16,17 +15,17 @@ current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
 
-# --- BACKEND CŨ (Original from main_window.py) ---
+# --- CORE MODULES ---
 from core.yolo_cropper import YoloCropper
 from core.trocr_reader import TrOCRReader
 from core.llm_grader import LLMGrader
 from core.excel_exporter import ExcelExporter
 from core.omr_processor import OMRProcessor
+from core.essay_processor import EssayProcessor
 from ui.key_editor import KeyEditorWindow
 from ui.camera_window import CameraWindow
 from ui.auto_mcq_window import AutoMCQWindow
 
-LLM_API_KEY = "" 
 YOLO_WEIGHTS = os.path.join(current_dir, "models", "yolo_weights", "best.pt")
 
 MAX_MCQ_SCORE = 4.0
@@ -69,8 +68,13 @@ class SystemCamera(ctk.CTk):
         try:
             self.detector = YoloCropper(model_path=YOLO_WEIGHTS)
             self.recognizer = TrOCRReader()
-            self.grader = LLMGrader(api_key=LLM_API_KEY)
+            self.grader = LLMGrader()
             self.omr = OMRProcessor()
+            self.essay_processor = EssayProcessor(
+                detector=self.detector,
+                recognizer=self.recognizer,
+                grader=self.grader,
+            )
             self.exporter = ExcelExporter(output_dir=os.path.join(current_dir, "data", "output"))
             
             self._set_info("✅ AI ĐÃ SẴN SÀNG! Đưa phiếu trắc nghiệm vào trước.", "#2ecc71")
@@ -347,65 +351,28 @@ class SystemCamera(ctk.CTk):
     def _run_essay_bg(self):
         self._set_info("⏳ Đang nhận diện chữ và chấm Tự luận bằng AI...")
         try:
-            # Lấy đáp án của mã đề tương ứng (nếu có), mặc định lấy TL 1
+            # Chuẩn bị đáp án từ tl_key_db
             essay_key = {}
             question_key = {}
-            # Nếu answer_key_db chưa tích hợp đầy đủ TL, dùng cách cũ từ gui_app:
-            # "Lấy dict đáp án tl_key_db" -> Hiện tại chúng ta chưa implement load_tl vào format phù hợp cho AI_grader.
-            # Tạm thời cứ giả sử tl_key_db chứa list dicts, chuyển đổi nó cho Llama:
-            code = self.current_mssv # Hoặc mã đề nếu bạn có trường mã đề
             if len(self.tl_key_db) > 0:
-                # Lấy ngẫu nhiên key đầu tiên nếu ko có mã đề
                 k = next(iter(self.tl_key_db))
                 tl_list = self.tl_key_db[k]
                 for item in tl_list:
-                    essay_key[item['q'] - 1] = item['dap_an'] # -1 vì YOLO trả order từ 0
+                    essay_key[item['q'] - 1] = item['dap_an']
                     question_key[item['q'] - 1] = item.get('cau_hoi', '')
-                    
-            crops = self.detector.detect_and_crop(self.tl_image_array, save_debug=False)
-            self.current_essay_details = []
-            correct_count = 0
-            annotated_essay_img = self.tl_image_array.copy()
-            
-            if not crops:
-                raise ValueError("Không tìm thấy khung trả lời tự luận nào trên ảnh!")
-                
-            for item in crops:
-                idx = item["order"]
-                roi = item["image"]
-                box = item.get("box", (0,0,0,0))
-                
-                ref_text = essay_key.get(idx, "")
-                question_text = question_key.get(idx, "")
-                ocr_text = self.recognizer.extract_text(roi)
-                grade_res = self.grader.grade(ref_text, ocr_text, question=question_text)
-                
-                is_correct = grade_res.get("result", "SAI")
-                if is_correct == "ĐÚNG":
-                    correct_count += 1
-                    color = (0, 255, 0)
-                else:
-                    color = (0, 0, 255)
-                    
-                if box != (0,0,0,0):
-                    x1, y1, x2, y2 = box
-                    cv2.rectangle(annotated_essay_img, (x1, y1), (x2, y2), color, 3)
-                    cv2.putText(annotated_essay_img, f"Cau {idx+1}: {is_correct}", (x1, max(30, y1 - 10)), 
-                                cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 3)
-                                
-                self.current_essay_details.append({
-                    "Câu": idx + 1,
-                    "Câu hỏi": question_text,
-                    "Đáp án chuẩn": ref_text,
-                    "Học sinh viết": ocr_text,
-                    "Kết quả": is_correct,
-                    "Lý do": grade_res.get("reason", "")
-                })
-                
-            total_essay_questions = len(essay_key) if len(essay_key) > 0 else 1
-            self.current_essay_score = (correct_count / total_essay_questions) * MAX_ESSAY_SCORE
-            self.tl_annotated = annotated_essay_img
-            
+
+            # Gọi EssayProcessor xử lý toàn bộ
+            result = self.essay_processor.process_image(
+                image=self.tl_image_array,
+                essay_key=essay_key,
+                question_key=question_key,
+                max_essay_score=MAX_ESSAY_SCORE,
+            )
+
+            self.current_essay_score = result["score"]
+            self.current_essay_details = result["details"]
+            self.tl_annotated = result["annotated_image"]
+
             self.after(0, self._on_tl_done)
         except Exception as e:
             self.after(0, lambda e=e: self._on_tl_error(e))

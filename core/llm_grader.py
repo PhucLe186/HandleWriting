@@ -2,41 +2,43 @@
 import json
 from groq import Groq
 
+# Điền API Key của GROQ vào đây (Bắt đầu bằng gsk_...):
+API_KEY = "YOUR_KEY"
+
 class LLMGrader:
-    def __init__(self, api_key):
+    def __init__(self):
         print("[LLM Grader] Đang khởi tạo kết nối API tới Groq...")
-        self.client = Groq(api_key=api_key)
+        self.client = Groq(api_key=API_KEY)
         # Sử dụng Llama 3.1 8B (Nhanh, thông minh, hỗ trợ JSON cực tốt)
         self.model = "llama-3.1-8b-instant" 
 
     def grade(self, reference_ans, ocr_ans, question=""):
         """
         Gửi đáp án lên Llama để chấm điểm và trả về chuẩn JSON.
-        Nếu có câu hỏi (question), AI sẽ dùng ngữ cảnh để đánh giá
-        câu trả lời khác chữ nhưng cùng ý nghĩa.
+        Bao gồm ngữ cảnh từ câu hỏi, đáp án chuẩn, và tiến hành chấm cực kỳ khắt khe.
         """
         # Xây dựng phần ngữ cảnh câu hỏi
         question_context = ""
         if question and question.strip():
             question_context = f"""
         Câu hỏi gốc: "{question}"
-        QUAN TRỌNG: Hãy dùng câu hỏi gốc để hiểu ngữ cảnh. Nếu học sinh trả lời đúng ý của câu hỏi 
-        dù cách diễn đạt khác với đáp án chuẩn, vẫn tính là ĐÚNG."""
+        YÊU CẦU: Hãy phân tích kỹ câu hỏi gốc để làm cơ sở đối chiếu khắt khe đáp án chuẩn và câu trả lời của học sinh."""
 
         prompt = f"""
-        Bạn là một giáo viên chấm thi tự luận công tâm và chi tiết.
-        Nhiệm vụ: So sánh 'Câu trả lời của học sinh' (do máy quét OCR đọc được) với 'Đáp án chuẩn'.
+        Bạn là một giám khảo chấm thi tự luận cực kỳ khắt khe và KHÔNG NHÂN NHƯỢNG.
+        Nhiệm vụ: So sánh 'Câu trả lời của học sinh' (do máy quét OCR đọc được) với 'Đáp án chuẩn' dựa trên 'Câu hỏi gốc' (nếu có).
         {question_context}
         Đáp án chuẩn: "{reference_ans}"
         Câu trả lời của học sinh: "{ocr_ans}"
         
-        Quy tắc chấm:
-        1. Máy quét OCR hay bị lỗi nhầm nét (VD: 'o' thành '0', 'l' thành 'I', thiếu dấu cách). Hãy lờ đi các lỗi đánh vần nhỏ này.
-        2. Nếu ý nghĩa tương đương hoặc học sinh trả lời đúng trọng tâm: ĐÚNG.
-        3. Nếu nội dung sai lệch hoàn toàn, ngược nghĩa, hoặc vô nghĩa: SAI.
+        Quy tắc chấm (KHẮT KHE):
+        1. Xem xét thật kỹ câu hỏi, đáp án chuẩn, và câu trả lời của học sinh. Học sinh phải trả lời ĐẦY ĐỦ Ý, ĐÚNG TRỌNG TÂM như đáp án chuẩn thì mới được đánh là ĐÚNG.
+        2. Nếu câu trả lời thiếu ý quan trọng, trả lời nửa vời, chung chung, hoặc diễn đạt sai lệch: Bắt buộc đánh SAI. Không châm chước kiểu "gần đúng".
+        3. Chỉ bỏ qua các lỗi nhận diện OCR hiển nhiên (VD: 'o' thành '0', 'l' thành 'I', lỗi khoảng trắng). Tuyệt đối không bỏ qua lỗi sai kiến thức.
+        4. Bất kỳ sự mâu thuẫn hay sai kiến thức nào đều dẫn đến kết quả là SAI.
         
         BẮT BUỘC chỉ trả về duy nhất định dạng JSON sau, không có thêm bất kỳ câu chữ nào khác:
-        {{"result": "ĐÚNG" hoặc "SAI", "reason": "Nhận xét rõ ràng (20-40 chữ): nêu cụ thể điểm giống/khác giữa bài làm và đáp án, giải thích tại sao ĐÚNG hoặc SAI"}}
+        {{"result": "ĐÚNG" hoặc "SAI", "reason": "Nhận xét khắt khe (20-40 chữ): giải thích chi tiết tại sao bài làm thiếu sót dẫn đến SAI, hoặc nếu hoàn toàn đúng thì tại sao ĐÚNG"}}
         """
         
         try:
@@ -52,17 +54,16 @@ class LLMGrader:
             return json.loads(response_text)
             
         except Exception as e:
-            print(f"[LLM Grader] Lỗi gọi API: {e}")
-            return {"result": "LỖI", "reason": "Không kết nối được với máy chủ chấm điểm."}
+            error_msg = str(e)
+            print(f"[LLM Grader] Lỗi gọi API: {error_msg}")
+            return {"result": "LỖI", "reason": f"Lỗi chi tiết: {error_msg}"}
 
 # =====================================================================
 # PHẦN TEST ĐỘC LẬP (Không cần ảnh, chỉ test text)
 # =====================================================================
 if __name__ == "__main__":
-    # Thay API Key của bạn vào đây (Bắt đầu bằng gsk_...)
-    API_KEY = "" 
     
-    grader = LLMGrader(api_key=API_KEY)
+    grader = LLMGrader()
     
     # Giả lập đáp án và kết quả OCR (cố tình để OCR đọc sai chữ O thành số 0)
     ref_text = "hello world"

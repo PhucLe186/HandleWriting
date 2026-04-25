@@ -5,7 +5,7 @@ import cv2
 import numpy as np
 
 class TrOCRReader:
-    def __init__(self, model_name='microsoft/trocr-base-handwritten'):
+    def __init__(self, model_name='microsoft/trocr-large-handwritten'):
         print(f"[TrOCR] Đang tải mô hình từ HuggingFace: {model_name}...")
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
